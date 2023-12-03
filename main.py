@@ -1,112 +1,170 @@
 from sklearn.tree import DecisionTreeRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
+from sklearn.utils import resample
+from sklearn.metrics import mean_absolute_error
 import matplotlib.pyplot as plt
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.model_selection import GridSearchCV
 import math
 import numpy as np
+import matplotlib.dates as mdates
+from datetime import datetime, timedelta
 
-data_2022 = pd.read_csv('data_2022.csv')
-data_2023 = pd.read_csv('data_2023.csv') 
+data_2022 = 'data_2022.csv'
+data_2023 = 'data_2023.csv'
 
-def make_dataset(data, window_size = 4):
-    x, y = [], []
+def plot_data(
+        start_date: datetime,
+        end_date: datetime,
+        dataset,
+        train_set_length,
+        predictions,
+        window_size: int,
+        title="Title",
+        ):
+    start_num = mdates.date2num(start_date)
+    end_num = mdates.date2num(end_date)
+
+    dates = [start_date + timedelta(days=i) for i in range(len(dataset))]
+    dates = mdates.date2num(dates)
+
+    plt.figure(figsize=(15, 10))
+    plt.xlim(start_num, end_num)
+    plt.title(title)
+
+    plt.plot(dates, dataset, label='Actual Demand', color='blue')
+
+    prediction_start_date = start_date + timedelta(days=window_size)
+    prediction_dates = [prediction_start_date + timedelta(days=i) for i in range(len(predictions))]
+    prediction_dates = mdates.date2num(prediction_dates)
+
+    plt.plot(prediction_dates, predictions, label=f'Predictions with Window Size {window_size}', color='red')
+
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    plt.gca().xaxis.set_major_locator(mdates.DayLocator(interval=7))
+    plt.gcf().autofmt_xdate()
+
+    plt.xlabel('Date')
+    plt.ylabel('Demand')
+    plt.legend()
+    plt.show()
+
+def make_dataset(
+        file_names: list,
+        target_column,
+        window_size=4
+        ):
+    data = pd.concat([pd.read_csv(i) for i in file_names])
+    X, y = [], []
     for i in range(len(data) - window_size):
-        x.append(data[i:i+window_size])
-        y.append(data[i+window_size])
-    return x, y
+        X.append(data.iloc[i:i + window_size][target_column].values)
+        y.append(data.iloc[i + window_size][target_column])
+    return np.array(X), np.array(y), data[target_column].values
 
-def bootstrap_sample(X, y):
-    n_samples = X.shape[0]
-    indices = np.random.choice(n_samples, size=n_samples, replace=True)
-    return X[indices], y[indices]
+def find_best_window_size(data):
+    test_rmse = []
+    test_mape = []
+    test_r2 = []
+    test_mae = []
+    for i in range(1, 101):
+        window_size = i
+        X, Y, _ = make_dataset(data, "Demand", window_size)
+        X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, shuffle = False)
+        model = DecisionTreeRegressor(random_state = 89)
+        model.fit(X_train, Y_train)
+        predictions = model.predict(X_test)
+        test_rmse.append(math.sqrt(mean_squared_error(Y_test, predictions)))
+        test_mape.append(mean_absolute_percentage_error(Y_test, predictions))
+        test_r2.append(r2_score(Y_test, predictions))
+        test_mae.append(mean_absolute_error(Y_test, predictions))
+    min_rmse = min(test_rmse)
+    min_rmse_index = test_rmse.index(min_rmse) + 1
+    min_mape = min(test_mape)
+    min_mape_index = test_mape.index(min_mape) + 1
+    min_r2 = max(test_r2)
+    min_r2_index = test_r2.index(min_r2) + 1
+    min_mae = min(test_mae)
+    min_mae_index = test_mae.index(min_mae) + 1
 
-def aggregate_predictions(predictions):
-    predictions_array = np.array(predictions)
-    mean_predictions = np.mean(predictions_array, axis=0)
-    return mean_predictions
+    return min_rmse, min_rmse_index, min_mape, min_mape_index, min_r2, min_r2_index, min_mae, min_mae_index
 
-def weighted_predict_ensemble(ensemble, X, weights):
-    predictions = np.array([tree.predict(X) for tree in ensemble])
-    weighted_predictions = np.average(predictions, axis=0, weights=weights)
-    return weighted_predictions
+##############
+### Task 2 ###
+##############
 
-validation_mse = []
-test_mse = []
+min_rmse, min_rmse_index, min_mape, min_mape_index, min_r2, min_r2_index, min_mae, min_mae_index = find_best_window_size([data_2022])
 
-for i in range(1, 101):
-    window_size = i
-    dataset_2022 = data_2022['Demand'].tolist()
-    X, Y = make_dataset(dataset_2022, window_size)
-    X_train, X_val, Y_train, Y_val = train_test_split(X, Y, test_size=0.2, shuffle = False)
+optimal_window_size = int((min_mae_index + min_r2_index + min_mape_index + min_rmse_index)/4)
 
-    model = DecisionTreeRegressor(random_state = 3)
-    model.fit(X_train, Y_train)
+print("\n### Decision Tree Regressor ###")
+print("Min RMSE:", min_rmse)
+print("Min MAPE:", min_mape)
+print("Max R2:", min_r2)
+print("Min MAE:", min_mae)
+print("Optimal window size:", optimal_window_size)
 
-    predictions_val = model.predict(X_val)
-    mse = math.sqrt(mean_squared_error(Y_val, predictions_val))
-    validation_mse.append(mse)
+X_2022, Y_2022, dataset_2022 = make_dataset([data_2022], "Demand", optimal_window_size)
+X_train_2022, X_test_2022, Y_train_2022, Y_test_2022 = train_test_split(X_2022, Y_2022, test_size=0.3, random_state=89, shuffle=False)
 
-    dataset_2023 = data_2023['Demand'].tolist()
-    X_test, Y_test = make_dataset(dataset_2023, window_size)
-    predictions_test = model.predict(X_test)
-    mse_test = math.sqrt(mean_squared_error(Y_test, predictions_test))
-    test_mse.append(mse_test)
+model = DecisionTreeRegressor(random_state=89)
+model.fit(X_train_2022, Y_train_2022)
 
-average_rmse = [(v + t) / 2 for v, t in zip(validation_mse, test_mse)]
-min_avg_rmse = min(average_rmse)
-min_avg_rmse_index = average_rmse.index(min_avg_rmse) + 1
+predictions_2022 = model.predict(X_2022)
 
-print("Min average RMSE:", min_avg_rmse)
-print("Optimal window size:", min_avg_rmse_index)
+mae_tree = mean_absolute_error(Y_2022, predictions_2022)
+r2_tree = r2_score(Y_2022, predictions_2022)
+print(f"MAE for Decision Tree Regressor: {mae_tree}")
+print(f"R2 for Decision Tree Regressor: {r2_tree}")
 
-effective_window_size = min_avg_rmse_index
+start_date = datetime(2022, 1, 1)
+end_date = datetime(2022, 12, 31)
 
-# Create the dataset
-dataset_2022 = data_2022['Demand'].tolist()
-X, Y = make_dataset(dataset_2022, effective_window_size)
+plot_data(start_date, end_date, dataset_2022, len(X_train_2022), predictions_2022, optimal_window_size, 'Decision Tree Regressor: Actual vs Predicted Demand for 2022')
 
-# Split the dataset
-X_train, X_val, Y_train, Y_val = train_test_split(X, Y, test_size=0.2, random_state=3, shuffle = False)
+##############
+### Task 3 ###
+##############
 
-# Initialize and fit the model
-model = DecisionTreeRegressor(random_state=3)
-model.fit(X_train, Y_train)
-
-
-# Plotting the actual vs predicted demand for 2022
-predictions_2022 = []
-for i in range(len(dataset_2022) - effective_window_size):
-    seq = dataset_2022[i:i+effective_window_size]
-    predictions_2022.append(model.predict([seq])[0])
-
-dataset_2023 = data_2023['Demand'].tolist()
-X_2023, Y_2023 = make_dataset(dataset_2023, effective_window_size)
-
-# Predicting the demand for 2023
-predictions_2023 = []
-for i in range(len(X_2023)):
-    seq = X_2023[i]  # No need for the loop as we already have the sequences prepared
-    predictions_2023.append(model.predict([seq])[0])
-
-n_trees = 100
-n_features = int(np.sqrt(np.array(X_train).shape[1])) #Max features for each tree
-
-ensemble = []
-for i in range(n_trees):
-    X_sample, y_sample = bootstrap_sample(np.array(X_train), np.array(Y_train))
+class RandomForest:
+    '''
+    Custom Random Forest class for regression problems. This implementation supports
+    bootstrapped samples, random splits, and random subspace method. The implementation
+    supports a weighted prediction scheme for regression problems.
     
-    tree = DecisionTreeRegressor(max_depth=np.random.choice(range(3, 50)),
-                                 min_samples_split=np.random.choice(range(2, 50)),
-                                 min_samples_leaf=np.random.choice(range(1, 50)),
-                                 max_features=n_features,
-                                 random_state=np.random.randint(0, 10000))
-
-    tree.fit(X_sample, y_sample)
-    ensemble.append(tree)
-
-class CustomRandomForest:
+    Parameters:
+    -----------
+    n_trees: int
+    The number of classification trees that are used.
+    max_depth: int
+    The maximum depth of the tree
+    min_samples_split: int
+    The minimum number of samples needed to make a split when building a tree
+    min_samples_leaf: int
+    The minimum number of samples needed to be at a leaf node.
+    max_features: int or literal string "sqrt", "log2", "auto".
+    The number of features to consider when looking for the best split
+    random_state: int
+    Random seed for sampling and subspace randomization
+    
+    Attributes:
+    -----------
+    forest: list
+    A list of DecisionTree objects
+    
+    Methods:
+    -----------
+    fit(X, y)
+    Given training data X and targets y, trains a random forest of decision trees
+    predict(X)
+    Given a new set of data X, predicts the target for each point in X
+    weighted_predict(X, weights)
+    Given a new set of data X, predicts the target for each point in X using a weighted prediction scheme
+    evaluate_tree_performance(X, y)
+    Given a dataset X and targets y, evaluates the performance of each tree in the random forest
+    evaluate_performance(X, y)
+    Given a dataset X and targets y, evaluates the performance of the random forest
+    '''
     def __init__(self, n_trees=100, max_depth_range=(3, 50), min_samples_split_range=(2, 50), min_samples_leaf_range=(1, 50), max_features='sqrt', random_state=None):
         self.n_trees = n_trees
         self.max_depth_range = max_depth_range
@@ -116,10 +174,16 @@ class CustomRandomForest:
         self.random_state = random_state
         self.trees = []
 
-    def bootstrap_sample(self, X, y):
+    def bootstrap_sample(self, X, y, block_size = 100):
         n_samples = X.shape[0]
-        indices = np.random.choice(n_samples, size=n_samples, replace=True)
-        return X[indices], y[indices]
+        n_blocks = int(np.ceil(n_samples / block_size))
+        block_indices = np.random.choice(n_blocks, size=n_blocks, replace=True)
+        X_sample = np.concatenate([X[i * block_size:(i + 1) * block_size] for i in block_indices], axis=0)
+        y_sample = np.concatenate([y[i * block_size:(i + 1) * block_size] for i in block_indices], axis=0)
+        X_sample = X_sample[:n_samples]
+        y_sample = y_sample[:n_samples]
+        
+        return X_sample, y_sample
 
     def fit(self, X, y):
         for _ in range(self.n_trees):
@@ -149,87 +213,278 @@ class CustomRandomForest:
             performances.append(r2_score(y, predictions))
         return performances
 
-ensemble_predictions_2022 = []
+    def evaluate_performance(self, X, y):
+        predictions = self.predict(X)
+        return r2_score(y, predictions), mean_absolute_error(y, predictions)
 
-for i in range(len(dataset_2022) - effective_window_size):
-    seq = np.array(dataset_2022[i:i+effective_window_size]).reshape(1, -1)  # Reshape for a single sample
-    # Get predictions from each tree and aggregate
-    tree_predictions = [tree.predict(seq)[0] for tree in ensemble]
-    ensemble_predictions_2022.append(np.mean(tree_predictions))
+random_forest = RandomForest(
+                n_trees = 10,
+                max_depth_range = (3, 50),
+                min_samples_split_range = (2, 50),
+                min_samples_leaf_range = (1, 50),
+                max_features = 'sqrt',
+                random_state = 89
+                )
+random_forest.fit(X_train_2022, Y_train_2022)
+rf_predictions_train = random_forest.predict(X_train_2022)
+rf_predictions_2022 = random_forest.predict(X_test_2022)
+all_rf_predictions = np.concatenate([rf_predictions_train, rf_predictions_2022])
 
-ensemble_predictions_2023 = []
+rf_r2, rf_mae = random_forest.evaluate_performance(X_test_2022, Y_test_2022)
+print("\n### Random Forest ###")
+print("MAE for Random Forest:", rf_mae)
+print("R2 for Random Forest:", rf_r2)
 
-for i in range(len(dataset_2023) - effective_window_size):
-    seq = np.array(dataset_2023[i:i+effective_window_size]).reshape(1, -1)  # Reshape for a single sample
-    # Get predictions from each tree and aggregate
-    tree_predictions = [tree.predict(seq)[0] for tree in ensemble]
-    ensemble_predictions_2023.append(np.mean(tree_predictions))
+plot_data(start_date, end_date, dataset_2022, len(X_train_2022), all_rf_predictions, optimal_window_size, 'Random Forest: Actual vs Predicted Demand for 2022')
 
-def predict_ensemble(ensemble, X):
-    predictions = np.array([tree.predict(X) for tree in ensemble])
-    return np.mean(predictions, axis=0)
+##############
+### Task 4 ###
+##############
 
-# Predictions for validation set (considering the effective window size)
-val_predictions = model.predict(X_val)
+def plot_mlp_predictions(
+        actual_dates,
+        actual_demand,
+        predictions,
+        title='MLP Predictions'
+        ):
+    assert len(actual_dates) == len(predictions), "The lengths of actual dates and predictions must match."
 
-tree_performances = []
+    plt.figure(figsize=(15, 10))
+    plt.plot(actual_dates, actual_demand, label='Actual Demand', color='blue')
+    plt.plot(actual_dates, predictions, label='MLP Predictions', color='red', linestyle='--')
+    plt.gca().xaxis.set_major_locator(mdates.DayLocator(interval=7))
+    plt.title(title)
+    plt.xticks(rotation=45)
+    plt.xlabel('Date')
+    plt.ylabel('Demand')
+    plt.legend()
+    plt.show()
 
-for tree in ensemble:
-    tree_predictions = tree.predict(X_val)
-    tree_r2 = r2_score(Y_val, tree_predictions)
-    tree_performances.append(tree_r2)
+def make_dataset_mlp(
+        file_names,
+        target_column,
+        window_size=4
+        ):
+    data = pd.concat([pd.read_csv(file) for file in file_names])
+    data['Date'] = pd.to_datetime(data['Date'], dayfirst=True)
+    data['DayOfWeek'] = data['Date'].dt.dayofweek
 
-# Convert performance to positive weights (e.g., higher R2 score gets higher weight)
-weights = np.array(tree_performances) - min(tree_performances)
+    for lag in range(1, window_size + 1):
+        data[f'Demand_Lag{lag}'] = data[target_column].shift(lag)
 
-# Normalize weights to sum up to 1
-weights = weights / weights.sum()
+    data.dropna(inplace=True)
+    feature_cols = [f'Demand_Lag{lag}' for lag in range(1, window_size + 1)] + ['DayOfWeek']
+    X = data[feature_cols].values
+    y = data[target_column].values
 
-weighted_ensemble_predictions = weighted_predict_ensemble(ensemble, np.array(X_val), weights)
+    return X, y
 
-# Predictions for validation set from the ensemble
-ensemble_predictions_val = predict_ensemble(ensemble, np.array(X_val))
+def find_best_window_size_mlp(data):
+    test_rmse = []
+    test_mape = []
+    test_r2 = []
+    test_mae = []
+    for i in range(1, 15):
+        window_size = i
+        X, Y = make_dataset_mlp([data_2022], "Demand", window_size)
+        X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, shuffle = False)
+        model = MLPRegressor(random_state = 89, max_iter = 5000)
+        model.fit(X_train, Y_train)
+        predictions = model.predict(X_test)
+        test_rmse.append(math.sqrt(mean_squared_error(Y_test, predictions)))
+        test_mape.append(mean_absolute_percentage_error(Y_test, predictions))
+        test_r2.append(r2_score(Y_test, predictions))
+        test_mae.append(mean_absolute_error(Y_test, predictions))
 
-# Calculate R^2 score for the ensemble model
-ensemble_r2 = r2_score(Y_val[-len(weighted_ensemble_predictions):], weighted_ensemble_predictions)
+    min_rmse = min(test_rmse)
+    min_rmse_index = test_rmse.index(min_rmse) + 1
+    min_mape = min(test_mape)
+    min_mape_index = test_mape.index(min_mape) + 1
+    min_r2 = max(test_r2)
+    min_r2_index = test_r2.index(min_r2) + 1
+    min_mae = min(test_mae)
+    min_mae_index = test_mae.index(min_mae) + 1
 
-# Calculate R^2 score for the single tree model
-r2_score_val = r2_score(Y_val[-len(val_predictions):], val_predictions)
+    return min_rmse, min_rmse_index, min_mape, min_mape_index, min_r2, min_r2_index, min_mae, min_mae_index
 
-from sklearn.ensemble import RandomForestRegressor
+class MLPEnsemble:
+    '''
+    Custom MLP Ensemble class for regression problems. This implementation supports
+    bootstrapped samples, random splits, and random subspace method. The implementation
+    supports a weighted prediction scheme for regression problems.
 
-# Initialize RandomForestRegressor
-# n_estimators is the number of trees in the forest
-# max_features is the number of features to consider for each split - you might set this to 'sqrt' or 'log2'
-rf_model = RandomForestRegressor(n_estimators=100, max_features='sqrt', random_state=3)
+    Parameters:
+    -----------
+    n_estimators: int
+    The number of MLPs that are used.
+    hidden_layer_sizes: tuple
+    The number of hidden layers in each MLP
+    max_iter: int
+    The maximum number of iterations to train each MLP
+    random_state: int
+    Random seed for sampling and subspace randomization
+    
+    Attributes:
+    -----------
+    ensemble: list
+    A list of MLPRegressor objects
+    
+    Methods:
+    -----------
+    fit(X, y)
+    Given training data X and targets y, trains an ensemble of MLPs
+    predict(X)
+    Given a new set of data X, predicts the target for each point in X
+    evaluate_performance(X, y)
+    Given a dataset X and targets y, evaluates the performance of the ensemble
+    '''
+    def __init__(self, n_estimators=5, max_iter=1000, random_state = None, early_stopping = True):
+        self.n_estimators = n_estimators
+        self.max_iter = max_iter
+        self.random_state = random_state
+        self.ensemble = []
+        self.early_stopping = early_stopping
+        np.random.seed(random_state)
 
-# Train the model on the training data
-rf_model.fit(X_train, Y_train)
+    def fit(self, X, y):
+        bootstrapped_samples = self.bootstrap_samples(X, y)
+        for i in range(self.n_estimators):
+            hidden_layer_sizes = (15, 15)
 
-# Make predictions
-rf_predictions_val = rf_model.predict(X_val)
+            mlp = MLPRegressor(
+                hidden_layer_sizes=hidden_layer_sizes,
+                max_iter=self.max_iter,
+                learning_rate = 'adaptive',
+                learning_rate_init = 0.01,
+                random_state=self.random_state,
+                early_stopping=self.early_stopping
+            )
+            X_sample, y_sample = bootstrapped_samples[i]
+            mlp.fit(X_sample, y_sample)
+            self.ensemble.append(mlp)
 
-# Calculate R^2 score
-rf_r2_score_val = r2_score(Y_val, rf_predictions_val)
-print(f"Random Forest R^2 on validation set: {rf_r2_score_val}")
+    def bootstrap_samples(self, X, y):
+        bootstrapped_samples = []
+        for _ in range(self.n_estimators):
+            X_sample, y_sample = resample(X, y, replace=True)
+            bootstrapped_samples.append((X_sample, y_sample))
+        return bootstrapped_samples
 
-print(f"Ensemble R^2 on validation set: {ensemble_r2}")
-print(f"R^2 on validation set (single tree): {r2_score_val}")
+    def predict(self, X):
+        predictions = np.array([mlp.predict(X) for mlp in self.ensemble])
+        return np.mean(predictions, axis=0)
+
+    def evaluate_performance(self, X, y):
+        predictions = self.predict(X)
+        return r2_score(y, predictions), mean_absolute_error(y, predictions)
 
 
-# Now plot the results
-plt.figure(figsize=(15, 7))
+dataset_2022_mlp = pd.read_csv(data_2022)
+dataset_2022_mlp['Date'] = pd.to_datetime(dataset_2022_mlp['Date'], dayfirst = True)
+dataset_2022_mlp['DayOfWeek'] = dataset_2022_mlp['Date'].dt.dayofweek
 
-plt.plot(range(1, len(dataset_2022) + 1), dataset_2022, color="red", label="Actual Demand 2022", dashes=[1, 1])
-plt.plot(range(1, len(dataset_2023) + 1), dataset_2023, color="green", label="Actual Demand 2023", dashes=[1, 1])
+min_rmse_mlp, min_rmse_index_mlp, min_mape_mlp, min_mape_index_mlp, min_r2_mlp, min_r2_index_mlp, min_mae_mlp, min_mae_index_mlp = find_best_window_size_mlp([data_2022])
 
-plt.plot(range(effective_window_size + 1, len(ensemble_predictions_2022) + effective_window_size + 1), ensemble_predictions_2022, label='Ensemble Predicted Demand 2022', color='blue')
-plt.plot(range(effective_window_size + 1, len(ensemble_predictions_2023) + effective_window_size + 1), ensemble_predictions_2023, label='Ensemble Predicted Demand 2023', color='orange')
+optimal_window_size_mlp = int((min_mae_index_mlp + min_r2_index_mlp + min_mape_index_mlp + min_rmse_index_mlp)/4) * 2
 
-#plt.plot(range(effective_window_size + 1, len(predictions_2022) + effective_window_size + 1), predictions_2022, color="purple", label="Predicted Demand 2022")
-#plt.plot(range(effective_window_size + 1, len(predictions_2023) + effective_window_size + 1), predictions_2023, color="cyan", label="Predicted Demand 2023")
-plt.title('Actual vs Ensemble Predicted Demand for 2022 and 2023')
-plt.xlabel('Day of the Year')
+print("\n### MLP Ensemble 2022 ###")
+print("Min RMSE:", min_rmse_mlp)
+print("Min MAPE:", min_mape_mlp)
+print("Max R2:", min_r2_mlp)
+print("Min MAE:", min_mae_mlp)
+print("Optimal window size:", optimal_window_size_mlp)
+
+X, y = make_dataset_mlp([data_2022], "Demand", optimal_window_size_mlp)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, shuffle=False)
+
+mlp_ensemble = MLPEnsemble(n_estimators = 10, max_iter = 10000, random_state = 89, early_stopping = True)
+mlp_ensemble.fit(X_train, y_train)
+mlp_predictions_train = mlp_ensemble.predict(X_train)
+mlp_predictions_2022 = mlp_ensemble.predict(X_test)
+all_mlp_predictions = np.concatenate([mlp_predictions_train, mlp_predictions_2022])
+
+performanceR2, performanceMAE = mlp_ensemble.evaluate_performance(X_test, y_test)
+print("MAE for MLP Ensemble:", performanceMAE)
+print("R2 for MLP Ensemble:", performanceR2)
+
+plot_mlp_predictions(
+    dataset_2022_mlp['Date'][optimal_window_size_mlp:],
+    dataset_2022_mlp['Demand'][optimal_window_size_mlp:],
+    all_mlp_predictions,
+    title='MLP Model: Actual vs Predicted Demand for 2022'
+)
+
+##############
+### Task 5 ###
+##############
+
+dataset_2023_mlp = pd.read_csv(data_2023)
+dataset_2023_mlp['Date'] = pd.to_datetime(dataset_2023_mlp['Date'], dayfirst = True)
+dataset_2023_mlp['DayOfWeek'] = dataset_2023_mlp['Date'].dt.dayofweek
+
+min_rmse_mlp_2023, min_rmse_index_mlp_2023, min_mape_mlp_2023, min_mape_index_mlp_2023, min_r2_mlp_2023, min_r2_index_mlp_2023, min_mae_mlp_2023, min_mae_index_mlp_2023 = find_best_window_size_mlp([data_2023])
+
+optimal_window_size_mlp_2023 = int((min_mae_index_mlp_2023 + min_r2_index_mlp_2023 + min_mape_index_mlp_2023 + min_rmse_index_mlp_2023)/4)
+
+optimal_window_size_mlp_2023 *= 2
+
+print("\n### MLP Ensemble 2023 ###")
+print("Min RMSE:", min_rmse_mlp_2023)
+print("Min MAPE:", min_mape_mlp_2023)
+print("Max R2:", min_r2_mlp_2023)
+print("Min MAE:", min_mae_mlp_2023)
+print("Optimal window size:", optimal_window_size_mlp_2023)
+
+X_2023, y_2023 = make_dataset_mlp([data_2023], "Demand", optimal_window_size_mlp_2023)
+
+X_train_2023, X_test_2023, y_train_2023, y_test_2023 = train_test_split(X_2023, y_2023, test_size=0.3, shuffle=False)
+
+mlp_ensemble_2023 = MLPEnsemble(n_estimators = 5, max_iter = 1000, random_state = 89, early_stopping = True)
+mlp_ensemble_2023.fit(X_train_2023, y_train_2023)
+mlp_predictions_train_2023 = mlp_ensemble_2023.predict(X_train_2023)
+mlp_predictions_test_2023 = mlp_ensemble_2023.predict(X_test_2023)
+all_mlp_predictions_2023 = np.concatenate([mlp_predictions_train_2023, mlp_predictions_test_2023])
+
+print("MAE for MLP Ensemble:", mean_absolute_error(y_test_2023, mlp_predictions_test_2023))
+
+plot_mlp_predictions(
+    dataset_2023_mlp['Date'][optimal_window_size_mlp_2023:],
+    dataset_2023_mlp['Demand'][optimal_window_size_mlp_2023:],
+    all_mlp_predictions_2023,
+    title='MLP Model: Actual vs Predicted Demand for 2023'
+)
+
+initial_data = dataset_2023_mlp[['Demand', 'DayOfWeek']].tail(optimal_window_size_mlp_2023)
+most_recent_data_list = initial_data.values.tolist()
+
+start_date = datetime(2023, 8, 26)
+end_date = datetime(2023, 12, 31)
+current_date = start_date
+
+predicted_demand = []
+while current_date <= end_date:
+    demand_features = [row[0] for row in most_recent_data_list][-optimal_window_size_mlp_2023:]
+    day_of_week = current_date.weekday()
+
+    features = demand_features + [day_of_week]
+    current_prediction = mlp_ensemble_2023.predict([features])[0]
+    predicted_demand.append((current_date, current_prediction))
+
+    most_recent_data_list.append([current_prediction, day_of_week])
+    if len(most_recent_data_list) > optimal_window_size_mlp_2023:
+        most_recent_data_list.pop(0)
+    current_date += timedelta(days=1)
+
+predicted_demand_df = pd.DataFrame(predicted_demand, columns=['Date', 'Predicted Demand'])
+predicted_demand_df.set_index('Date', inplace=True)
+
+plt.figure(figsize=(15, 10))
+plt.plot(predicted_demand_df.index, predicted_demand_df['Predicted Demand'], label='Predicted Demand', color='blue', linestyle='--')
+plt.gca().xaxis.set_major_locator(mdates.DayLocator(interval=7))
+plt.title('Predicted Demand for the Rest of 2023')
+plt.xlabel('Date')
 plt.ylabel('Demand')
 plt.legend()
+plt.xticks(rotation=45)
+plt.grid(True)
 plt.show()
